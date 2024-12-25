@@ -1,6 +1,9 @@
 use crate::{InitTradeErrors, TradeAgreement, TradeStatus, DISCRIMINATOR, TRADE_SEED};
 use anchor_lang::{prelude::*, system_program};
-use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface};
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token_interface::{self, Mint, TokenAccount, TokenInterface},
+};
 
 /// Transfer deposit from depositor to trade agreement
 fn transfer_lamps_deposit<'info>(
@@ -13,7 +16,7 @@ fn transfer_lamps_deposit<'info>(
 
     require!(
         depositor_lamports >= *deposit,
-        InitTradeErrors::InsufficientFunds
+        InitTradeErrors::InsufficientLamports
     );
 
     let cpi_accounts = system_program::Transfer {
@@ -28,8 +31,9 @@ fn transfer_lamps_deposit<'info>(
 }
 
 pub fn transfer_tokens_deposit<'info>(
-    from: &Signer<'info>,
-    to: &Account<'info, TradeAgreement>,
+    from: &InterfaceAccount<'info, TokenAccount>,
+    to: &InterfaceAccount<'info, TokenAccount>,
+    authority: &Signer<'info>,
     token_program: &Interface<'info, TokenInterface>,
     deposit_mint: &InterfaceAccount<'info, Mint>,
     deposit: &u64,
@@ -37,12 +41,17 @@ pub fn transfer_tokens_deposit<'info>(
     let cpi_accounts = token_interface::TransferChecked {
         from: from.to_account_info(),
         to: to.to_account_info(),
-        authority: from.to_account_info(),
+        authority: authority.to_account_info(),
         mint: deposit_mint.to_account_info(),
     };
 
     let cpi_context = CpiContext::new(token_program.to_account_info(), cpi_accounts);
-    token_interface::transfer_checked(cpi_context, *deposit, deposit_mint.decimals)?;
+    let transfer_result =
+        token_interface::transfer_checked(cpi_context, *deposit, deposit_mint.decimals);
+
+    if transfer_result.is_err() {
+        return err!(InitTradeErrors::InsufficientTokens);
+    }
 
     Ok(())
 }
@@ -60,8 +69,9 @@ pub fn _init(ctx: Context<InitTradeAccounts>, input: InitTradeInput) -> Result<(
 
     // Transfer the deposit tokens from the depositor to the trade agreement account
     transfer_tokens_deposit(
+        &ctx.accounts.depositor_token_account,
+        &ctx.accounts.trade_token_account,
         &ctx.accounts.depositor,
-        &ctx.accounts.trade,
         &ctx.accounts.token_program,
         &ctx.accounts.deposit_mint,
         &input.deposit_tokens,
@@ -93,17 +103,12 @@ pub struct InitTradeAccounts<'info> {
     #[account(
         mut,
         associated_token::mint = deposit_mint,
-        associated_token::authority = depositor
+        associated_token::authority = depositor,
+        associated_token::token_program = token_program
     )]
     pub depositor_token_account: InterfaceAccount<'info, TokenAccount>,
     pub deposit_mint: InterfaceAccount<'info, Mint>,
-    #[account()]
     pub beneficiary: SystemAccount<'info>,
-    #[account(
-        associated_token::mint = ask_mint,
-        associated_token::authority = beneficiary
-    )]
-    pub beneficiary_token_account: InterfaceAccount<'info, TokenAccount>,
     pub ask_mint: InterfaceAccount<'info, Mint>,
     #[account(
         init,
@@ -113,8 +118,17 @@ pub struct InitTradeAccounts<'info> {
         bump
     )]
     pub trade: Account<'info, TradeAgreement>,
+    #[account(
+        init,
+        payer = depositor,
+        associated_token::mint = deposit_mint,
+        associated_token::authority = trade,
+        associated_token::token_program = token_program
+    )]
+    pub trade_token_account: InterfaceAccount<'info, TokenAccount>,
     pub system_program: Program<'info, System>,
     pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize)]

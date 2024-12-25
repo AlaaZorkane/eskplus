@@ -3,10 +3,11 @@
   "scripts": {
     "lint:fix": "biome lint --unsafe --error-on-warnings ./tests",
     "lint": "biome lint --error-on-warnings .",
-    "test": "vitest --dir ./tests"
+    "test": "vitest -t init --dir ./tests"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
+    "@solana/spl-token": "^0.4.9",
     "neverthrow": "^8.1.1"
   },
   "devDependencies": {

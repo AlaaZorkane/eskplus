@@ -16,6 +16,6 @@ no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
-anchor-lang = { git = "https://github.com/coral-xyz/anchor.git" }
+anchor-lang = { git = "https://github.com/coral-xyz/anchor.git", features = ["init-if-needed"]}
 anchor-spl = { git = "https://github.com/coral-xyz/anchor.git" }
 thiserror = "2.0.6"

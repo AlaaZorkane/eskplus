@@ -54,4 +54,8 @@ export const lamps = (sol: number) => {
   return sol * anchor.web3.LAMPORTS_PER_SOL;
 };
 
+export const tokens = (amount: number, decimals = 9) => {
+  return amount * 10 ** decimals;
+};
+
 export type EsksplusError = Eskplus["errors"][number];
