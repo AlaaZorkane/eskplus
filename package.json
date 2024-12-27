@@ -3,7 +3,7 @@
   "scripts": {
     "lint:fix": "biome lint --unsafe --error-on-warnings ./tests",
     "lint": "biome lint --error-on-warnings .",
-    "test": "vitest -t init --dir ./tests"
+    "test": "vitest -t fulfill --dir ./tests"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",

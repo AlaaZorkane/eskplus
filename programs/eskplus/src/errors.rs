@@ -1,6 +1,12 @@
 use anchor_lang::prelude::*;
 
 #[error_code]
+pub enum TradeErrors {
+    #[msg("Invalid token program id")]
+    InvalidTokenProgramId,
+}
+
+#[error_code]
 pub enum InitTradeErrors {
     #[msg("Not enough deposit Lamports")]
     InsufficientLamports,
@@ -10,6 +16,8 @@ pub enum InitTradeErrors {
 
 #[error_code]
 pub enum FulfillTradeErrors {
+    #[msg("Ask and deposit token programs do not match")]
+    AskDepositTokenProgramMismatch,
     #[msg("Not enough Lamports")]
     InsufficientLamports,
 }

@@ -1,17 +1,74 @@
 import * as anchor from "@coral-xyz/anchor";
-import { describe, beforeEach, it, expect } from "vitest";
+import { describe, beforeEach, it, expect, beforeAll } from "vitest";
 import { type PublicKey, Keypair } from "@solana/web3.js";
-import { airdrop, balance, getTradePda, lamps, program } from "./utils.ts";
+import {
+  airdrop,
+  balance,
+  getTradePda,
+  lamps,
+  program,
+  tokens,
+} from "./utils.ts";
 import { ResultAsync } from "neverthrow";
+import { TOKEN_DECIMALS } from "./constants.ts";
+import {
+  createMint,
+  getAssociatedTokenAddress,
+  getOrCreateAssociatedTokenAccount,
+  mintToChecked,
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
 
 describe("eskplus fulfill instruction", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
+  let payer: Keypair;
   let depositor: Keypair;
   let beneficiary: Keypair;
+  let depositMint: PublicKey;
+  let askMint: PublicKey;
 
   let tradePda: PublicKey;
+
+  beforeAll(async () => {
+    payer = Keypair.generate();
+
+    await airdrop(provider, payer.publicKey, lamps(100));
+
+    // Create a deposit mint (legacy token program)
+    depositMint = await createMint(
+      provider.connection,
+      payer,
+      payer.publicKey,
+      payer.publicKey,
+      TOKEN_DECIMALS,
+      undefined,
+      {
+        commitment: "confirmed",
+      },
+      TOKEN_PROGRAM_ID,
+    );
+
+    console.log(`DEPOSIT MINT: ${depositMint.toBase58()}`);
+
+    // Create an ask mint (token2022)
+    askMint = await createMint(
+      provider.connection,
+      payer,
+      payer.publicKey,
+      payer.publicKey,
+      TOKEN_DECIMALS,
+      undefined,
+      {
+        commitment: "confirmed",
+      },
+      TOKEN_2022_PROGRAM_ID,
+    );
+
+    console.log(`ASK MINT: ${askMint.toBase58()}`);
+  });
 
   beforeEach(async () => {
     depositor = Keypair.generate();
@@ -21,20 +78,114 @@ describe("eskplus fulfill instruction", () => {
     // Fund the accounts
     await airdrop(provider, depositor.publicKey, lamps(100));
     await airdrop(provider, beneficiary.publicKey, lamps(100));
+
+    const depositorTokenAccount = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      payer,
+      depositMint,
+      depositor.publicKey,
+      false,
+      "confirmed",
+      {
+        commitment: "confirmed",
+      },
+      TOKEN_PROGRAM_ID,
+    );
+
+    console.log(
+      `DEPOSITOR TOKEN ACCOUNT: ${depositorTokenAccount.address.toBase58()}`,
+    );
+
+    const beneficiaryAskTokenAccount = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      beneficiary,
+      askMint,
+      beneficiary.publicKey,
+      false,
+      "confirmed",
+      {
+        commitment: "confirmed",
+      },
+      TOKEN_2022_PROGRAM_ID,
+    );
+
+    console.log(
+      `BENEFICIARY ASK TOKEN ACCOUNT: ${beneficiaryAskTokenAccount.address.toBase58()}`,
+    );
+
+    const beneficiaryDepositTokenAccount =
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        beneficiary,
+        depositMint,
+        beneficiary.publicKey,
+        false,
+        "confirmed",
+        {
+          commitment: "confirmed",
+        },
+        TOKEN_PROGRAM_ID,
+      );
+
+    console.log(
+      `BENEFICIARY DEPOSIT TOKEN ACCOUNT: ${beneficiaryDepositTokenAccount.address.toBase58()}`,
+    );
+
+    // Mint tokens to the depositor deposit token account (legacy)
+    await mintToChecked(
+      provider.connection,
+      payer,
+      depositMint,
+      depositorTokenAccount.address,
+      payer,
+      tokens(100),
+      TOKEN_DECIMALS,
+      undefined,
+      {
+        commitment: "confirmed",
+      },
+      TOKEN_PROGRAM_ID,
+    );
+
+    // Mint tokens to the beneficiary ask token account (legacy)
+    await mintToChecked(
+      provider.connection,
+      payer,
+      askMint,
+      beneficiaryAskTokenAccount.address,
+      payer,
+      tokens(100),
+      TOKEN_DECIMALS,
+      undefined,
+      {
+        commitment: "confirmed",
+      },
+      TOKEN_2022_PROGRAM_ID,
+    );
   });
 
-  it("should fail to fulfill a trade agreement with insufficient funds", async () => {
+  it("should fail to fulfill a trade agreement with insufficient lamps", async () => {
+    const askLamps = lamps(999);
+    const depositLamps = lamps(1);
+    const askTokens = tokens(1);
+    const depositTokens = tokens(1);
+
     // We initialize a trade agreement
     const tradeInitTx = await program.methods
       .init({
-        ask: new anchor.BN(lamps(999)),
-        deposit: new anchor.BN(lamps(1)),
+        askLamps: new anchor.BN(askLamps),
+        depositLamps: new anchor.BN(depositLamps),
+        askTokens: new anchor.BN(askTokens),
+        depositTokens: new anchor.BN(depositTokens),
         id: 0,
       })
       .accounts({
         depositor: depositor.publicKey,
         beneficiary: beneficiary.publicKey,
         trade: tradePda,
+        askMint,
+        depositMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([depositor])
       .rpc();
@@ -50,6 +201,10 @@ describe("eskplus fulfill instruction", () => {
           depositor: depositor.publicKey,
           beneficiary: beneficiary.publicKey,
           trade: tradePda,
+          depositMint,
+          askMint,
+          askTokenProgram: TOKEN_2022_PROGRAM_ID,
+          depositTokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([beneficiary])
         .rpc({
@@ -80,6 +235,10 @@ describe("eskplus fulfill instruction", () => {
           depositor: depositor.publicKey,
           beneficiary: beneficiary.publicKey,
           trade: tradePda,
+          depositMint,
+          askMint,
+          askTokenProgram: TOKEN_2022_PROGRAM_ID,
+          depositTokenProgram: TOKEN_PROGRAM_ID,
         })
         .signers([beneficiary])
         .rpc({
@@ -103,6 +262,8 @@ describe("eskplus fulfill instruction", () => {
   it("should succeed to fulfill a trade agreement", async () => {
     const ask = lamps(2);
     const deposit = lamps(1);
+    const askTokens = tokens(1);
+    const depositTokens = tokens(1);
     const beforeDepositorBalance = await balance(provider, depositor.publicKey);
     const beforeBeneficiaryBalance = await balance(
       provider,
@@ -120,21 +281,37 @@ describe("eskplus fulfill instruction", () => {
     console.log("Trade PDA: %s", tradePda.toBase58());
 
     // We initialize a trade agreement
-    await program.methods
+    const initTx = await program.methods
       .init({
-        ask: new anchor.BN(ask),
-        deposit: new anchor.BN(deposit),
+        askLamps: new anchor.BN(ask),
+        depositLamps: new anchor.BN(deposit),
+        askTokens: new anchor.BN(askTokens),
+        depositTokens: new anchor.BN(depositTokens),
         id: 0,
       })
       .accounts({
         depositor: depositor.publicKey,
         beneficiary: beneficiary.publicKey,
         trade: tradePda,
+        askMint,
+        depositMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([depositor])
       .rpc({
         commitment: "confirmed",
       });
+
+    console.log("Init tx: %s", initTx);
+
+    const tradeTokenAccount = await getAssociatedTokenAddress(
+      depositMint,
+      tradePda,
+      true,
+      TOKEN_PROGRAM_ID,
+    );
+
+    console.log("Trade token account: %s", tradeTokenAccount.toBase58());
 
     const tx = await program.methods
       .fulfill({ id: 0 })
@@ -142,11 +319,17 @@ describe("eskplus fulfill instruction", () => {
         depositor: depositor.publicKey,
         beneficiary: beneficiary.publicKey,
         trade: tradePda,
+        depositMint,
+        askMint,
+        askTokenProgram: TOKEN_2022_PROGRAM_ID,
+        depositTokenProgram: TOKEN_PROGRAM_ID,
       })
       .signers([beneficiary])
       .rpc({
         commitment: "confirmed",
       });
+
+    console.log("TX: ", tx);
 
     const tradeAccount = await program.account.tradeAgreement.fetch(
       tradePda,
@@ -161,9 +344,6 @@ describe("eskplus fulfill instruction", () => {
       beneficiary.publicKey,
     );
     const rent = await balance(provider, tradePda);
-
-    console.log("TX: %s", tx);
-    console.log("Trade PDA: %s with rent %s", tradePda.toBase58(), rent);
 
     const expectedDepositorBalance = beforeDepositorBalance + lamps(1) - rent;
     const expectedBeneficiaryBalance = beforeBeneficiaryBalance - lamps(1);

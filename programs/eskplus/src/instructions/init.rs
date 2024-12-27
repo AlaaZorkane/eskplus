@@ -1,4 +1,7 @@
-use crate::{InitTradeErrors, TradeAgreement, TradeStatus, DISCRIMINATOR, TRADE_SEED};
+use crate::{
+    InitTradeErrors, TradeAgreement, TradeStatus, TradeTokenProgramVersion, DISCRIMINATOR,
+    TRADE_SEED,
+};
 use anchor_lang::{prelude::*, system_program};
 use anchor_spl::{
     associated_token::AssociatedToken,
@@ -86,9 +89,13 @@ pub fn _init(ctx: Context<InitTradeAccounts>, input: InitTradeInput) -> Result<(
     trade.deposit_lamps = input.deposit_lamps;
     trade.deposit_tokens = input.deposit_tokens;
     trade.deposit_mint = ctx.accounts.deposit_mint.key();
+    trade.deposit_token_program =
+        TradeTokenProgramVersion::FROM_ID(ctx.accounts.deposit_mint.to_account_info().owner);
     trade.ask_lamps = input.ask_lamps;
     trade.ask_tokens = input.ask_tokens;
     trade.ask_mint = ctx.accounts.ask_mint.key();
+    trade.ask_token_program =
+        TradeTokenProgramVersion::FROM_ID(ctx.accounts.ask_mint.to_account_info().owner);
     trade.status = TradeStatus::Open;
     trade.bump = ctx.bumps.trade;
 
