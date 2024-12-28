@@ -6,7 +6,7 @@ use anchor_spl::{
     token_interface::{self, Mint, TokenAccount, TokenInterface},
 };
 
-/// Transfer ask from beneficiary to depositor
+/// Transfer ask from beneficiary to depositor and reloads all concerned accounts
 fn transfer_ask_lamps<'info>(
     beneficiary: &Signer<'info>,
     depositor: &SystemAccount<'info>,
@@ -33,28 +33,32 @@ fn transfer_ask_lamps<'info>(
 
 /// Transfer deposit from trade agreement account to beneficiary
 fn transfer_lamps_trade_to_beneficiary<'info>(
-    trade_account: &Account<'info, TradeAgreement>,
+    trade_account: &mut Account<'info, TradeAgreement>,
     beneficiary: &Signer<'info>,
-    deposit: &u64,
 ) -> Result<()> {
+    let deposit = trade_account.deposit_lamps;
+    let trade_account_lamps = trade_account.get_lamports();
+
     require!(
-        **trade_account.to_account_info().try_borrow_lamports()? >= *deposit,
+        trade_account_lamps >= deposit,
         FulfillTradeErrors::InsufficientLamports
     );
 
-    **trade_account.to_account_info().try_borrow_mut_lamports()? -= *deposit;
-    **beneficiary.to_account_info().try_borrow_mut_lamports()? += *deposit;
+    trade_account.sub_lamports(deposit)?;
+    beneficiary.add_lamports(deposit)?;
+    trade_account.reload()?;
 
     Ok(())
 }
 
 fn transfer_fulfill_tokens<'info>(
-    from: &InterfaceAccount<'info, TokenAccount>,
-    to: &InterfaceAccount<'info, TokenAccount>,
+    from: &mut InterfaceAccount<'info, TokenAccount>,
+    to: &mut InterfaceAccount<'info, TokenAccount>,
     authority: &AccountInfo<'info>,
     token_program: &Interface<'info, TokenInterface>,
     mint: &InterfaceAccount<'info, Mint>,
     amount: &u64,
+    // If from is the trade PDA, then we need to sign the transaction.
     signature: Option<&[&[&[u8]]]>,
 ) -> Result<()> {
     let cpi_accounts = token_interface::TransferChecked {
@@ -72,61 +76,64 @@ fn transfer_fulfill_tokens<'info>(
     };
     token_interface::transfer_checked(cpi_context, *amount, mint.decimals)?;
 
+    from.reload()?;
+    to.reload()?;
+
     Ok(())
 }
 
 /// [ENTRYPOINT]
 /// Fulfill a trade agreement, entrypoint handler of the "fulfill" instruction
 pub fn _fulfill(ctx: Context<FulfillTradeAccounts>, _input: FulfillTradeInput) -> Result<()> {
-    let trade = &mut ctx.accounts.trade;
-    let trade_account = trade.to_account_info();
-    let depositor_key = ctx.accounts.depositor.key();
-    let beneficiary_key = ctx.accounts.beneficiary.key();
+    let trade_account = ctx.accounts.trade.to_account_info();
 
+    // To prevent runtime balances mismatches, we first do tokens transfers.
+    let depositor_key = ctx.accounts.depositor.to_account_info().key();
+    let beneficiary_key = ctx.accounts.beneficiary.to_account_info().key();
     let trade_pda_seeds = &[
         TRADE_SEED.as_bytes(),
-        &[trade.id],
+        &[ctx.accounts.trade.id],
         depositor_key.as_ref(),
         beneficiary_key.as_ref(),
-        &[trade.bump],
+        &[ctx.accounts.trade.bump],
     ];
-
     let trade_account_signature = &[&trade_pda_seeds[..]];
+    transfer_fulfill_tokens(
+        &mut ctx.accounts.trade_token_account,
+        &mut ctx.accounts.beneficiary_deposit_token_account,
+        &trade_account,
+        &ctx.accounts.deposit_token_program,
+        &ctx.accounts.deposit_mint,
+        &ctx.accounts.trade.deposit_tokens,
+        Some(trade_account_signature),
+    )?;
 
+    // Transfer ask tokens from beneficiary to depositor
+    transfer_fulfill_tokens(
+        &mut ctx.accounts.beneficiary_ask_token_account,
+        &mut ctx.accounts.depositor_ask_token_account,
+        &ctx.accounts.beneficiary,
+        &ctx.accounts.ask_token_program,
+        &ctx.accounts.ask_mint,
+        &ctx.accounts.trade.ask_tokens,
+        None,
+    )?;
+
+    // Then we do the lamports transfers.
     // Transfer ask lamports from beneficiary to depositor
     transfer_ask_lamps(
         &ctx.accounts.beneficiary,
         &ctx.accounts.depositor,
         &ctx.accounts.system_program,
-        &trade.ask_lamps,
+        &ctx.accounts.trade.ask_lamps,
     )?;
-
-    // Transfer ask tokens from beneficiary to depositor
-    transfer_fulfill_tokens(
-        &ctx.accounts.beneficiary_ask_token_account,
-        &ctx.accounts.depositor_ask_token_account,
-        &ctx.accounts.beneficiary,
-        &ctx.accounts.ask_token_program,
-        &ctx.accounts.ask_mint,
-        &trade.ask_tokens,
-        None,
-    )?;
-
     // Transfer deposit lamports from trade agreement account to beneficiary
-    transfer_lamps_trade_to_beneficiary(trade, &ctx.accounts.beneficiary, &trade.deposit_lamps)?;
+    transfer_lamps_trade_to_beneficiary(&mut ctx.accounts.trade, &ctx.accounts.beneficiary)?;
 
-    // Transfer deposit tokens from trade agreement account to beneficiary
-    transfer_fulfill_tokens(
-        &ctx.accounts.trade_token_account,
-        &ctx.accounts.beneficiary_deposit_token_account,
-        &trade_account,
-        &ctx.accounts.deposit_token_program,
-        &ctx.accounts.deposit_mint,
-        &trade.deposit_tokens,
-        Some(trade_account_signature),
-    )?;
-
+    // Update the trade agreement account status
+    let trade = &mut ctx.accounts.trade;
     trade.status = TradeStatus::Fulfilled;
+
     Ok(())
 }
 
@@ -151,7 +158,6 @@ pub struct FulfillTradeAccounts<'info> {
     #[account(mut)]
     pub beneficiary: Signer<'info>,
     /// We need two accounts here for the beneficiary in case the ask and deposit tokens are from different programs.
-    /// If they are from the same program, then we can use the same account for both.
     #[account(
         mut,
         associated_token::mint = ask_mint,
