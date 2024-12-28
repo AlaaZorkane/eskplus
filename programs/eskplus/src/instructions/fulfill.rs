@@ -144,8 +144,7 @@ pub struct FulfillTradeAccounts<'info> {
     pub depositor: SystemAccount<'info>,
     /// Account that the beneficiary will transfer the ask tokens to.
     #[account(
-        init_if_needed,
-        payer = beneficiary,
+        mut,
         associated_token::mint = ask_mint,
         associated_token::authority = depositor,
         associated_token::token_program = ask_token_program

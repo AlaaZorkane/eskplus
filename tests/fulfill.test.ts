@@ -3,6 +3,8 @@ import { describe, beforeEach, it, expect, beforeAll } from "vitest";
 import { type PublicKey, Keypair } from "@solana/web3.js";
 import {
   airdrop,
+  ataAmount,
+  ataAmountByPk,
   balance,
   getTradePda,
   lamps,
@@ -12,12 +14,14 @@ import {
 import { ResultAsync } from "neverthrow";
 import { TOKEN_DECIMALS } from "./constants.ts";
 import {
+  createAssociatedTokenAccount,
   createMint,
   getAssociatedTokenAddress,
   getOrCreateAssociatedTokenAccount,
   mintToChecked,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  type Account,
 } from "@solana/spl-token";
 
 describe("eskplus fulfill instruction", () => {
@@ -29,6 +33,10 @@ describe("eskplus fulfill instruction", () => {
   let beneficiary: Keypair;
   let depositMint: PublicKey;
   let askMint: PublicKey;
+  let beneficiaryAskTokenAccount: Account;
+  let beneficiaryDepositTokenAccount: Account;
+  const askTokenProgram = TOKEN_2022_PROGRAM_ID;
+  const depositTokenProgram = TOKEN_PROGRAM_ID;
 
   let tradePda: PublicKey;
 
@@ -96,7 +104,7 @@ describe("eskplus fulfill instruction", () => {
       `DEPOSITOR TOKEN ACCOUNT: ${depositorTokenAccount.address.toBase58()}`,
     );
 
-    const beneficiaryAskTokenAccount = await getOrCreateAssociatedTokenAccount(
+    beneficiaryAskTokenAccount = await getOrCreateAssociatedTokenAccount(
       provider.connection,
       beneficiary,
       askMint,
@@ -113,19 +121,18 @@ describe("eskplus fulfill instruction", () => {
       `BENEFICIARY ASK TOKEN ACCOUNT: ${beneficiaryAskTokenAccount.address.toBase58()}`,
     );
 
-    const beneficiaryDepositTokenAccount =
-      await getOrCreateAssociatedTokenAccount(
-        provider.connection,
-        beneficiary,
-        depositMint,
-        beneficiary.publicKey,
-        false,
-        "confirmed",
-        {
-          commitment: "confirmed",
-        },
-        TOKEN_PROGRAM_ID,
-      );
+    beneficiaryDepositTokenAccount = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      beneficiary,
+      depositMint,
+      beneficiary.publicKey,
+      false,
+      "confirmed",
+      {
+        commitment: "confirmed",
+      },
+      TOKEN_PROGRAM_ID,
+    );
 
     console.log(
       `BENEFICIARY DEPOSIT TOKEN ACCOUNT: ${beneficiaryDepositTokenAccount.address.toBase58()}`,
@@ -147,8 +154,8 @@ describe("eskplus fulfill instruction", () => {
       TOKEN_PROGRAM_ID,
     );
 
-    // Mint tokens to the beneficiary ask token account (legacy)
-    await mintToChecked(
+    // Mint tokens to the beneficiary ask token account (token2022)
+    const tx = await mintToChecked(
       provider.connection,
       payer,
       askMint,
@@ -162,6 +169,8 @@ describe("eskplus fulfill instruction", () => {
       },
       TOKEN_2022_PROGRAM_ID,
     );
+
+    console.log("Mint tx: %s", tx);
   });
 
   it("should fail to fulfill a trade agreement with insufficient lamps", async () => {
@@ -260,15 +269,10 @@ describe("eskplus fulfill instruction", () => {
   });
 
   it("should succeed to fulfill a trade agreement", async () => {
-    const ask = lamps(2);
-    const deposit = lamps(1);
-    const askTokens = tokens(1);
-    const depositTokens = tokens(1);
-    const beforeDepositorBalance = await balance(provider, depositor.publicKey);
-    const beforeBeneficiaryBalance = await balance(
-      provider,
-      beneficiary.publicKey,
-    );
+    const askLamps = lamps(2);
+    const depositLamps = lamps(1);
+    const askTokens = tokens(10);
+    const depositTokens = tokens(20);
 
     const [tradePda] = getTradePda(
       depositor.publicKey,
@@ -283,8 +287,8 @@ describe("eskplus fulfill instruction", () => {
     // We initialize a trade agreement
     const initTx = await program.methods
       .init({
-        askLamps: new anchor.BN(ask),
-        depositLamps: new anchor.BN(deposit),
+        askLamps: new anchor.BN(askLamps),
+        depositLamps: new anchor.BN(depositLamps),
         askTokens: new anchor.BN(askTokens),
         depositTokens: new anchor.BN(depositTokens),
         id: 0,
@@ -311,7 +315,50 @@ describe("eskplus fulfill instruction", () => {
       TOKEN_PROGRAM_ID,
     );
 
+    const depositorAskTokenAccount = await createAssociatedTokenAccount(
+      provider.connection,
+      depositor,
+      askMint,
+      depositor.publicKey,
+      {
+        commitment: "confirmed",
+      },
+      askTokenProgram,
+    );
+
+    console.log(
+      "Depositor ask token account: %s",
+      depositorAskTokenAccount.toBase58(),
+    );
     console.log("Trade token account: %s", tradeTokenAccount.toBase58());
+
+    const beforeDepositorBalance = await balance(provider, depositor.publicKey);
+    const beforeBeneficiaryBalance = await balance(
+      provider,
+      beneficiary.publicKey,
+    );
+    const beforeBeneficiaryDepositTokenBalance = await ataAmount(
+      provider,
+      beneficiaryDepositTokenAccount.address,
+      depositTokenProgram,
+    );
+    const beforeDepositorDepositTokenBalance = await ataAmountByPk(
+      provider,
+      depositor.publicKey,
+      depositMint,
+      depositTokenProgram,
+    );
+    const beforeBeneficiaryAskTokenBalance = await ataAmount(
+      provider,
+      beneficiaryAskTokenAccount.address,
+      askTokenProgram,
+    );
+    const beforeDepositorAskTokenBalance = await ataAmountByPk(
+      provider,
+      depositor.publicKey,
+      askMint,
+      askTokenProgram,
+    );
 
     const tx = await program.methods
       .fulfill({ id: 0 })
@@ -335,21 +382,61 @@ describe("eskplus fulfill instruction", () => {
       tradePda,
       "confirmed",
     );
-    const currentDepositorBalance = await balance(
-      provider,
-      depositor.publicKey,
-    );
-    const currentBeneficiaryBalance = await balance(
+    const afterDepositorBalance = await balance(provider, depositor.publicKey);
+    const afterBeneficiaryBalance = await balance(
       provider,
       beneficiary.publicKey,
     );
-    const rent = await balance(provider, tradePda);
+    const afterBeneficiaryDepositTokenBalance = await ataAmountByPk(
+      provider,
+      beneficiary.publicKey,
+      depositMint,
+      depositTokenProgram,
+    );
+    const afterBeneficiaryAskTokenBalance = await ataAmount(
+      provider,
+      beneficiaryAskTokenAccount.address,
+      askTokenProgram,
+    );
+    const afterDepositorDepositTokenBalance = await ataAmountByPk(
+      provider,
+      depositor.publicKey,
+      depositMint,
+      depositTokenProgram,
+    );
+    const afterDepositorAskTokenBalance = await ataAmount(
+      provider,
+      depositorAskTokenAccount,
+      askTokenProgram,
+    );
 
-    const expectedDepositorBalance = beforeDepositorBalance + lamps(1) - rent;
-    const expectedBeneficiaryBalance = beforeBeneficiaryBalance - lamps(1);
+    const expectedDepositorBalance = beforeDepositorBalance + askLamps;
+    const expectedBeneficiaryBalance =
+      beforeBeneficiaryBalance - askLamps + depositLamps;
+    const expectedDepositorAskTokenBalance =
+      beforeDepositorAskTokenBalance + askTokens;
+    const expectedBeneficiaryDepositTokenBalance =
+      beforeBeneficiaryDepositTokenBalance + depositTokens;
+    // This will stay the same because no depositor tokens are transferred on the fulfill instruction
+    const expectedDepositorDepositTokenBalance =
+      beforeDepositorDepositTokenBalance;
+    const expectedBeneficiaryAskTokenBalance =
+      beforeBeneficiaryAskTokenBalance - askTokens;
 
     expect(tradeAccount.status).to.deep.equal({ fulfilled: {} });
-    expect(currentDepositorBalance).to.equal(expectedDepositorBalance);
-    expect(currentBeneficiaryBalance).to.equal(expectedBeneficiaryBalance);
+    expect(afterDepositorBalance).to.equal(expectedDepositorBalance);
+    expect(afterBeneficiaryBalance).to.equal(expectedBeneficiaryBalance);
+    expect(afterDepositorAskTokenBalance).to.equal(
+      expectedDepositorAskTokenBalance,
+    );
+    expect(afterBeneficiaryDepositTokenBalance).to.equal(
+      expectedBeneficiaryDepositTokenBalance,
+    );
+    expect(afterDepositorDepositTokenBalance).to.equal(
+      expectedDepositorDepositTokenBalance,
+    );
+    expect(afterBeneficiaryAskTokenBalance).to.equal(
+      expectedBeneficiaryAskTokenBalance,
+    );
   });
 });
