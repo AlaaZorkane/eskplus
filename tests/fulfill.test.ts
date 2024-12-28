@@ -16,7 +16,6 @@ import { TOKEN_DECIMALS } from "./constants.ts";
 import {
   createAssociatedTokenAccount,
   createMint,
-  getAssociatedTokenAddress,
   getOrCreateAssociatedTokenAccount,
   mintToChecked,
   TOKEN_2022_PROGRAM_ID,
@@ -155,7 +154,7 @@ describe("eskplus fulfill instruction", () => {
     );
 
     // Mint tokens to the beneficiary ask token account (token2022)
-    const tx = await mintToChecked(
+    await mintToChecked(
       provider.connection,
       payer,
       askMint,
@@ -169,8 +168,6 @@ describe("eskplus fulfill instruction", () => {
       },
       TOKEN_2022_PROGRAM_ID,
     );
-
-    console.log("Mint tx: %s", tx);
   });
 
   it("should fail to fulfill a trade agreement with insufficient lamps", async () => {
@@ -280,10 +277,6 @@ describe("eskplus fulfill instruction", () => {
       0,
     );
 
-    console.log("Depositor: %s", depositor.publicKey.toBase58());
-    console.log("Beneficiary: %s", beneficiary.publicKey.toBase58());
-    console.log("Trade PDA: %s", tradePda.toBase58());
-
     // We initialize a trade agreement
     const initTx = await program.methods
       .init({
@@ -308,13 +301,6 @@ describe("eskplus fulfill instruction", () => {
 
     console.log("Init tx: %s", initTx);
 
-    const tradeTokenAccount = await getAssociatedTokenAddress(
-      depositMint,
-      tradePda,
-      true,
-      TOKEN_PROGRAM_ID,
-    );
-
     const depositorAskTokenAccount = await createAssociatedTokenAccount(
       provider.connection,
       depositor,
@@ -325,12 +311,6 @@ describe("eskplus fulfill instruction", () => {
       },
       askTokenProgram,
     );
-
-    console.log(
-      "Depositor ask token account: %s",
-      depositorAskTokenAccount.toBase58(),
-    );
-    console.log("Trade token account: %s", tradeTokenAccount.toBase58());
 
     const beforeDepositorBalance = await balance(provider, depositor.publicKey);
     const beforeBeneficiaryBalance = await balance(
@@ -376,7 +356,7 @@ describe("eskplus fulfill instruction", () => {
         commitment: "confirmed",
       });
 
-    console.log("TX: ", tx);
+    console.log("TX (fulfill): ", tx);
 
     const tradeAccount = await program.account.tradeAgreement.fetch(
       tradePda,
