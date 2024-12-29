@@ -178,7 +178,10 @@ pub struct FulfillTradeAccounts<'info> {
     #[account(
         mut,
         seeds = [TRADE_SEED.as_bytes(), &[input.id], depositor.key().as_ref(), beneficiary.key().as_ref()],
-        bump = trade.bump
+        bump = trade.bump,
+        constraint = trade.version == input.version @ FulfillTradeErrors::VersionMismatch,
+        constraint = trade.status == TradeStatus::Open @ FulfillTradeErrors::TradeNotOpen,
+        constraint = trade.status != TradeStatus::Fulfilled @ FulfillTradeErrors::TradeAlreadyFulfilled
     )]
     pub trade: Account<'info, TradeAgreement>,
     /// PDA that holds the deposit tokens from the depositor.
@@ -204,4 +207,5 @@ pub struct FulfillTradeAccounts<'info> {
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct FulfillTradeInput {
     pub id: u8,
+    pub version: u8,
 }
