@@ -49,12 +49,7 @@ pub fn transfer_tokens_deposit<'info>(
     };
 
     let cpi_context = CpiContext::new(token_program.to_account_info(), cpi_accounts);
-    let transfer_result =
-        token_interface::transfer_checked(cpi_context, *deposit, deposit_mint.decimals);
-
-    if transfer_result.is_err() {
-        return err!(InitTradeErrors::InsufficientTokens);
-    }
+    token_interface::transfer_checked(cpi_context, *deposit, deposit_mint.decimals)?;
 
     Ok(())
 }
@@ -98,6 +93,7 @@ pub fn _init(ctx: Context<InitTradeAccounts>, input: InitTradeInput) -> Result<(
         TradeTokenProgramVersion::FROM_ID(ctx.accounts.ask_mint.to_account_info().owner);
     trade.status = TradeStatus::Open;
     trade.bump = ctx.bumps.trade;
+    trade.version = 0;
 
     Ok(())
 }
