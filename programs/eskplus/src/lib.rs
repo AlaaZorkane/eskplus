@@ -22,13 +22,14 @@ pub mod eskplus {
         _init(ctx, input)
     }
 
-    // pub fn update(ctx: Context<UpdateTradeAccounts>) -> Result<()> {
-    //     _update(ctx)
-    // }
+    pub fn update(ctx: Context<UpdateTradeAccounts>, input: UpdateTradeInput) -> Result<()> {
+        _update(ctx, input)
+    }
 
-    // pub fn cancel(ctx: Context<CancelTradeAccounts>) -> Result<()> {
-    //     _cancel(ctx)
-    // }
+    /// Handler for canceling an escrow trade.
+    pub fn cancel(ctx: Context<CancelTradeAccounts>) -> Result<()> {
+        _cancel(ctx)
+    }
 
     /// Handler for fulfilling an escrow trade.
     pub fn fulfill(ctx: Context<FulfillTradeAccounts>, input: FulfillTradeInput) -> Result<()> {

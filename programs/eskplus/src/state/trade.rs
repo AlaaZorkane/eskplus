@@ -59,6 +59,8 @@ pub struct TradeAgreement {
     pub status: TradeStatus,
     /// (1) The bump of the trade agreement account
     pub bump: u8,
+    /// (1) The version of the trade agreement (used to prevent frontrunning)
+    pub version: u8,
 }
 
 impl TradeAgreement {

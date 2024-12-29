@@ -20,4 +20,24 @@ pub enum FulfillTradeErrors {
     AskDepositTokenProgramMismatch,
     #[msg("Not enough Lamports")]
     InsufficientLamports,
+    #[msg("Trade is not open")]
+    TradeNotOpen,
+    #[msg("Trade is already fulfilled")]
+    TradeAlreadyFulfilled,
+    #[msg("Trade version mismatch")]
+    VersionMismatch,
+}
+
+#[error_code]
+pub enum CancelTradeErrors {
+    #[msg("Trade is not open")]
+    TradeNotOpen,
+}
+
+#[error_code]
+pub enum UpdateTradeErrors {
+    #[msg("Trade is not open")]
+    TradeNotOpen,
+    #[msg("Trade is already fulfilled")]
+    TradeAlreadyFulfilled,
 }
